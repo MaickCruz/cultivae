@@ -1,30 +1,57 @@
 package br.com.cultivae.entity;
 
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-public class Comerciante extends Usuario {
-    private String telefone;
-    private String razaoSocial;
-    private final List<EstabelecimentoComercial> estabelecimentos = new ArrayList<>();
+import br.com.cultivae.enums.Perfil;
 
-    public Comerciante(int id, String nome, String sobrenome, String cpf, String email,
-                       String senhaHash, String telefone, String razaoSocial) {
-        super(id, nome, sobrenome, cpf, email, senhaHash);
-        setTelefone(telefone);
-        setRazaoSocial(razaoSocial);
+/** Tabela comerciante (perfil COMERCIANTE): CNPJ unico e nome fantasia obrigatorio. */
+public class Comerciante extends Usuario {
+
+    private String cnpj;
+    private String nomeFantasia;
+    private final List<Estabelecimento> estabelecimentos = new ArrayList<>();
+    private final List<Pedido> pedidosRealizados = new ArrayList<>();
+
+    public Comerciante(Integer id, String nome, String email, String senha, LocalDate dataCadastro,
+                       Status status, String cnpj, String nomeFantasia) {
+        super(id, nome, email, senha, dataCadastro, status, Perfil.COMERCIANTE);
+        setCnpj(cnpj);
+        setNomeFantasia(nomeFantasia);
     }
-    public String getTelefone() { return telefone; }
-    public String getRazaoSocial() { return razaoSocial; }
-    public List<EstabelecimentoComercial> getEstabelecimentos() { return Collections.unmodifiableList(estabelecimentos); }
-    public void setTelefone(String telefone) { this.telefone = validarTexto(telefone, "Telefone"); }
-    public void setRazaoSocial(String razaoSocial) { this.razaoSocial = validarTexto(razaoSocial, "Razão social"); }
-    public void cadastrarEstabelecimento(EstabelecimentoComercial estabelecimento) {
-        if (estabelecimento == null || estabelecimento.getComerciante() != this) {
-            throw new IllegalArgumentException("O estabelecimento deve pertencer a este comerciante.");
-        }
-        if (!estabelecimentos.contains(estabelecimento)) estabelecimentos.add(estabelecimento);
+
+    // ---------- regras de negocio ----------
+
+    /** abre um pedido para um produtor (os itens sao adicionados depois). */
+    public Pedido realizarPedido(Produtor produtor, Status statusInicial, String observacao) {
+        return new Pedido(null, this, produtor, statusInicial, observacao);
     }
-    @Override public String getPerfil() { return "COMERCIANTE"; }
+
+    /** total de pedidos do comerciante, de qualquer status. */
+    public int contarPedidos() {
+        return pedidosRealizados.size();
+    }
+
+    void registrarEstabelecimento(Estabelecimento estabelecimento) {
+        estabelecimentos.add(estabelecimento);
+    }
+
+    void registrarPedido(Pedido pedido) {
+        pedidosRealizados.add(pedido);
+    }
+
+    // ---------- getters e setters ----------
+
+    public String getCnpj() { return cnpj; }
+    public void setCnpj(String cnpj) { this.cnpj = Validacao.digitos(cnpj, "CNPJ", 14); }
+
+    public String getNomeFantasia() { return nomeFantasia; }
+    public void setNomeFantasia(String nomeFantasia) {
+        this.nomeFantasia = Validacao.texto(nomeFantasia, "Nome fantasia", 100);
+    }
+
+    public List<Estabelecimento> getEstabelecimentos() { return Collections.unmodifiableList(estabelecimentos); }
+    public List<Pedido> getPedidosRealizados() { return Collections.unmodifiableList(pedidosRealizados); }
 }

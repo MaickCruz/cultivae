@@ -6,80 +6,130 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+/** Tabela pedido: feito por um comerciante e recebido por um produtor. */
 public class Pedido {
-    private final int id;
-    private final Produtor produtor;
+
+    private Integer id;
     private final Comerciante comerciante;
-    private final EstabelecimentoComercial estabelecimento;
-    private final LocalDateTime dataPedido;
-    private final List<ItemPedido> itens = new ArrayList<>();
-    private StatusPedido status = StatusPedido.PENDENTE;
+    private final Produtor produtor;
+    private Status status;
+    private String observacao;
+    private LocalDateTime dataPedido;
+    private final List<ItemPedidoSafra> itens = new ArrayList<>();
 
-    public Pedido(int id, Produtor produtor, EstabelecimentoComercial estabelecimento) {
-        if (produtor == null || estabelecimento == null) throw new IllegalArgumentException("Partes obrigatórias.");
-        if (!produtor.isAtivo() || !estabelecimento.isAtivo() || !estabelecimento.getComerciante().isAtivo())
-            throw new IllegalStateException("Participante inativo.");
+    public Pedido(Integer id, Comerciante comerciante, Produtor produtor, Status status, String observacao) {
         this.id = id;
-        this.produtor = produtor;
-        this.estabelecimento = estabelecimento;
-        this.comerciante = estabelecimento.getComerciante();
+        this.comerciante = Validacao.obrigatorio(comerciante, "Comerciante");
+        this.produtor = Validacao.obrigatorio(produtor, "Produtor");
+        setStatus(status);
+        setObservacao(observacao);
         this.dataPedido = LocalDateTime.now();
+        comerciante.registrarPedido(this);
+        produtor.registrarPedido(this);
     }
-    public int getId() { return id; }
-    public Produtor getProdutor() { return produtor; }
-    public Comerciante getComerciante() { return comerciante; }
-    public EstabelecimentoComercial getEstabelecimento() { return estabelecimento; }
-    public LocalDateTime getDataPedido() { return dataPedido; }
-    public StatusPedido getStatus() { return status; }
-    public List<ItemPedido> getItens() { return Collections.unmodifiableList(itens); }
 
-    public void adicionarItem(ItemPedido item) {
-        exigirStatus(StatusPedido.PENDENTE);
-        if (item == null || item.getSafra().getProdutor() != produtor)
-            throw new IllegalArgumentException("Todos os itens devem ser do mesmo produtor do pedido.");
-        for (ItemPedido existente : itens) {
-            if (existente.getSafra() == item.getSafra())
-                throw new IllegalArgumentException("Safra já adicionada ao pedido; reúna a quantidade num único item.");
+    // ---------- regras de negocio ----------
+
+    /** RF19, RN09 e RN11: adiciona uma safra ao pedido com o preco praticado. */
+    public ItemPedidoSafra adicionarItem(Safra safra, BigDecimal quantidade, BigDecimal precoUnidade) {
+        Validacao.obrigatorio(safra, "Safra");
+        if (!safra.pertenceAoProdutor(produtor)) {
+            throw new IllegalArgumentException("A safra nao pertence a um estabelecimento do produtor deste pedido.");
         }
+        if (buscarItem(safra) != null) {
+            throw new IllegalArgumentException("Esta safra ja esta no pedido.");
+        }
+        ItemPedidoSafra item = new ItemPedidoSafra(safra, quantidade, precoUnidade);
         itens.add(item);
+        return item;
     }
-    public BigDecimal calcularValorTotal() {
-        return itens.stream().map(ItemPedido::calcularSubtotal).reduce(BigDecimal.ZERO, BigDecimal::add);
-    }
-    public boolean validarEstoque() {
-        return !itens.isEmpty() && itens.stream().allMatch(i -> i.getSafra().temEstoque(i.getQuantidade()));
-    }
-    // Escolha didática do fluxo: o estoque é baixado quando o produtor ACEITA o pedido.
-    public void aceitar() {
-        exigirStatus(StatusPedido.PENDENTE);
-        if (!validarEstoque()) throw new IllegalStateException("Pedido vazio ou sem estoque disponível.");
-        for (ItemPedido item : itens) item.getSafra().baixarEstoque(item.getQuantidade());
-        status = StatusPedido.ACEITO;
-    }
-    public void recusar() {
-        exigirStatus(StatusPedido.PENDENTE);
-        status = StatusPedido.RECUSADO;
-    }
-    public void iniciarTransporte() {
-        exigirStatus(StatusPedido.ACEITO);
-        status = StatusPedido.EM_TRANSPORTE;
-    }
-    public void concluir() {
-        exigirStatus(StatusPedido.EM_TRANSPORTE);
-        status = StatusPedido.CONCLUIDO;
-    }
-    public void cancelar() {
-        if (status == StatusPedido.ACEITO) {
-            for (ItemPedido item : itens) item.getSafra().reporEstoque(item.getQuantidade());
-        } else if (status != StatusPedido.PENDENTE) {
-            throw new IllegalStateException("Cancelamento permitido apenas para pedido pendente ou aceito.");
+
+    /** Variacao que usa o preco atual da safra. */
+    public ItemPedidoSafra adicionarItem(Safra safra, BigDecimal quantidade) {
+        Validacao.obrigatorio(safra, "Safra");
+        if (safra.getPrecoUnitario() == null) {
+            throw new IllegalArgumentException("A safra nao possui preco definido.");
         }
-        status = StatusPedido.CANCELADO;
+        return adicionarItem(safra, quantidade, safra.getPrecoUnitario());
     }
-    private void exigirStatus(StatusPedido esperado) {
-        if (status != esperado) throw new IllegalStateException("Operação exige status " + esperado + "; atual: " + status);
+
+    public boolean removerItem(Safra safra) {
+        ItemPedidoSafra item = buscarItem(safra);
+        return item != null && itens.remove(item);
     }
-    @Override public String toString() {
-        return "Pedido #" + id + " | " + status + " | Total: R$ " + calcularValorTotal();
+
+    private ItemPedidoSafra buscarItem(Safra safra) {
+        for (ItemPedidoSafra item : itens) {
+            if (item.getSafra() == safra) {
+                return item;
+            }
+        }
+        return null;
+    }
+
+    /** RN12: o valor total e sempre a soma dos subtotais dos itens. */
+    public BigDecimal calcularValorTotal() {
+        BigDecimal total = BigDecimal.ZERO;
+        for (ItemPedidoSafra item : itens) {
+            total = total.add(item.getSubtotal());
+        }
+        return total;
+    }
+
+    /** RF24: confere o estoque de todos os itens e so entao da baixa, de uma vez. */
+    public void confirmar(Status statusConfirmado) {
+        Validacao.obrigatorio(statusConfirmado, "Status");
+        if (itens.isEmpty()) {
+            throw new IllegalStateException("Nao e possivel confirmar um pedido sem itens.");
+        }
+        for (ItemPedidoSafra item : itens) {
+            if (!item.getSafra().temEstoque(item.getQuantidadeSolicitada())) {
+                throw new IllegalStateException(
+                        "Estoque insuficiente para a safra de " + item.getSafra().getProduto().getNome() + ".");
+            }
+        }
+        for (ItemPedidoSafra item : itens) {
+            item.getSafra().baixarEstoque(item.getQuantidadeSolicitada());
+        }
+        this.status = statusConfirmado;
+    }
+
+    /** RF22: registra um novo status (as transicoes permitidas ficam para a aplicacao futura). */
+    public void alterarStatus(Status novoStatus) {
+        setStatus(novoStatus);
+    }
+
+    public boolean estaEntregue() {
+        return status.possuiNome(Status.NOME_ENTREGUE);
+    }
+
+    // ---------- getters e setters ----------
+
+    public Integer getId() { return id; }
+    public void setId(Integer id) { this.id = id; }
+
+    public Comerciante getComerciante() { return comerciante; }
+    public Produtor getProdutor() { return produtor; }
+
+    public Status getStatus() { return status; }
+    public void setStatus(Status status) { this.status = Validacao.obrigatorio(status, "Status"); }
+
+    /** Calculado a partir dos itens, nao pode ser informado manualmente. */
+    public BigDecimal getValorTotal() { return calcularValorTotal(); }
+
+    public String getObservacao() { return observacao; }
+    public void setObservacao(String observacao) { this.observacao = Validacao.textoOpcional(observacao); }
+
+    public LocalDateTime getDataPedido() { return dataPedido; }
+    public void setDataPedido(LocalDateTime dataPedido) {
+        this.dataPedido = Validacao.obrigatorio(dataPedido, "Data do pedido");
+    }
+
+    public List<ItemPedidoSafra> getItens() { return Collections.unmodifiableList(itens); }
+
+    @Override
+    public String toString() {
+        return "Pedido " + (id == null ? "(novo)" : "#" + id) + " de " + comerciante.getNome()
+                + " para " + produtor.getNome() + " [" + status + "] R$ " + getValorTotal();
     }
 }
