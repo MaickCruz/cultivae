@@ -160,8 +160,8 @@ public class TesteVendaConsole {
         }
 
         try {
-            produtor.aceitarPedido(pedido, aceito);
             pedido.confirmar(aceito);
+            produtor.aceitarPedido(pedido, aceito);
 
             System.out.println("\nPedido aceito e confirmado!");
             System.out.println("--- ESTOQUE APOS A VENDA ---");
